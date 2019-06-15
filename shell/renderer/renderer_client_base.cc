@@ -19,6 +19,7 @@
 #include "electron/buildflags/buildflags.h"
 #include "native_mate/dictionary.h"
 #include "printing/buildflags/buildflags.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "shell/common/color_util.h"
 #include "shell/common/native_mate_converters/value_converter.h"
 #include "shell/common/options_switches.h"
@@ -82,6 +83,14 @@ void SetHiddenValue(v8::Handle<v8::Context> context,
   context->Global()->SetPrivate(context, privateKey, value);
 }
 
+v8::Local<v8::Value> ConvertOptionalToV8(v8::Isolate* isolate, int value) {
+  if (value) {
+    return mate::ConvertToV8(isolate, value);
+  } else {
+    return v8::Null(isolate);
+  }
+}
+
 }  // namespace
 
 RendererClientBase::RendererClientBase() {
@@ -91,8 +100,7 @@ RendererClientBase::RendererClientBase() {
       ParseSchemesCLISwitch(command_line, switches::kStandardSchemes);
   for (const std::string& scheme : standard_schemes_list)
     url::AddStandardScheme(scheme.c_str(), url::SCHEME_WITH_HOST);
-  isolated_world_ = base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kContextIsolation);
+
   // We rely on the unique process host id which is notified to the
   // renderer process via command line switch from the content layer,
   // if this switch is removed from the content layer for some reason,
@@ -113,11 +121,21 @@ void RendererClientBase::DidCreateScriptContext(
   v8::Isolate* isolate = context->GetIsolate();
   SetHiddenValue(context, "contextId", mate::ConvertToV8(isolate, context_id));
 
-  auto* command_line = base::CommandLine::ForCurrentProcess();
-  bool enableRemoteModule =
-      !command_line->HasSwitch(switches::kDisableRemoteModule);
-  SetHiddenValue(context, "enableRemoteModule",
-                 mate::ConvertToV8(isolate, enableRemoteModule));
+  auto dict = mate::Dictionary::CreateEmpty(isolate);
+  dict.Set("preloadScripts", web_preferences_.preload_paths);
+  dict.Set(options::kContextIsolation, web_preferences_.context_isolation);
+  dict.Set(options::kEnableRemoteModule, web_preferences_.enable_remote_module);
+  dict.Set(options::kNodeIntegration, web_preferences_.node_integration);
+  dict.Set(options::kNativeWindowOpen, web_preferences_.native_window_open);
+  dict.Set(options::kWebviewTag, web_preferences_.webview_tag);
+  dict.Set("isHiddenPage",
+           mate::ConvertToV8(isolate, web_preferences_.is_hidden_page));
+  dict.Set(options::kGuestInstanceID,
+           ConvertOptionalToV8(isolate, web_preferences_.guest_instance_id));
+  dict.Set(options::kOpenerID,
+           ConvertOptionalToV8(isolate, web_preferences_.opener_id));
+
+  SetHiddenValue(context, "webPreferences", dict.GetHandle());
 }
 
 void RendererClientBase::AddRenderBindings(
@@ -225,6 +243,15 @@ void RendererClientBase::RenderFrameCreated(
       base::BindRepeating(&ElectronApiServiceImpl::CreateMojoService,
                           render_frame, this));
 
+  mojom::ElectronBrowserPtr browser_ptr;
+  render_frame->GetRemoteInterfaces()->GetInterface(
+      mojo::MakeRequest(&browser_ptr));
+
+  mojom::WebPreferencesPtr web_preferences;
+  if (browser_ptr->DoGetWebPreferences(&web_preferences)) {
+    web_preferences_ = web_preferences->To<mojom::WebPreferences>();
+  }
+
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
   // Allow access to file scheme from pdf viewer.
   blink::WebSecurityPolicy::AddOriginAccessWhitelistEntry(
@@ -233,13 +260,11 @@ void RendererClientBase::RenderFrameCreated(
 
   content::RenderView* render_view = render_frame->GetRenderView();
   if (render_frame->IsMainFrame() && render_view) {
-    blink::WebView* webview = render_view->GetWebView();
-    if (webview) {
-      base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
-      if (cmd->HasSwitch(switches::kGuestInstanceID)) {  // webview.
+    if (blink::WebView* webview = render_view->GetWebView()) {
+      if (web_preferences_.guest_instance_id) {  // webview.
         webview->SetBaseBackgroundColor(SK_ColorTRANSPARENT);
       } else {  // normal window.
-        std::string name = cmd->GetSwitchValueASCII(switches::kBackgroundColor);
+        std::string name = web_preferences_.background_color;
         SkColor color =
             name.empty() ? SK_ColorTRANSPARENT : ParseHexColor(name);
         webview->SetBaseBackgroundColor(color);
@@ -268,12 +293,11 @@ bool RendererClientBase::OverrideCreatePlugin(
     content::RenderFrame* render_frame,
     const blink::WebPluginParams& params,
     blink::WebPlugin** plugin) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (params.mime_type.Utf8() == content::kBrowserPluginMimeType ||
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
       params.mime_type.Utf8() == kPdfPluginMimeType ||
 #endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
-      command_line->HasSwitch(switches::kEnablePlugins))
+      web_preferences_.enable_plugins)
     return false;
 
   *plugin = nullptr;
@@ -304,7 +328,7 @@ void RendererClientBase::DidSetUserAgent(const std::string& user_agent) {
 v8::Local<v8::Context> RendererClientBase::GetContext(
     blink::WebLocalFrame* frame,
     v8::Isolate* isolate) const {
-  if (isolated_world())
+  if (web_preferences_.context_isolation)
     return frame->WorldScriptContext(isolate, World::ISOLATED_WORLD);
   else
     return frame->MainWorldScriptContext();

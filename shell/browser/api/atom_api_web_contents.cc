@@ -60,6 +60,7 @@
 #include "shell/browser/lib/bluetooth_chooser.h"
 #include "shell/browser/native_window.h"
 #include "shell/browser/net/atom_network_delegate.h"
+#include "shell/browser/session_preferences.h"
 #include "shell/browser/ui/drag_util.h"
 #include "shell/browser/ui/inspectable_web_contents.h"
 #include "shell/browser/ui/inspectable_web_contents_view.h"
@@ -2032,6 +2033,17 @@ void WebContents::DoGetZoomLevel(DoGetZoomLevelCallback callback) {
   std::move(callback).Run(GetZoomLevel());
 }
 
+void WebContents::DoGetWebPreferences(DoGetWebPreferencesCallback callback) {
+  mojom::WebPreferencesPtr result;
+  if (auto* web_preferences = WebContentsPreferences::From(web_contents())) {
+    result = web_preferences->ToMojo();
+  } else {
+    result = mojom::WebPreferences::New();
+  }
+  result->preload_paths = GetPreloadPaths();
+  std::move(callback).Run(std::move(result));
+}
+
 void WebContents::ShowAutofillPopup(const gfx::RectF& bounds,
                                     const std::vector<base::string16>& values,
                                     const std::vector<base::string16>& labels) {
@@ -2043,14 +2055,21 @@ void WebContents::HideAutofillPopup() {
   CommonWebContentsDelegate::HideAutofillPopup();
 }
 
-v8::Local<v8::Value> WebContents::GetPreloadPath(v8::Isolate* isolate) const {
+std::vector<std::string> WebContents::GetPreloadPaths() const {
+  auto result = SessionPreferences::GetPreloads(GetBrowserContext());
+
   if (auto* web_preferences = WebContentsPreferences::From(web_contents())) {
     base::FilePath::StringType preload;
     if (web_preferences->GetPreloadPath(&preload)) {
-      return mate::ConvertToV8(isolate, preload);
+#if defined(OS_WIN)
+      result.emplace_back(base::UTF16ToUTF8(preload));
+#else
+      result.emplace_back(preload);
+#endif
     }
   }
-  return v8::Null(isolate);
+
+  return result;
 }
 
 v8::Local<v8::Value> WebContents::GetWebPreferences(
@@ -2070,13 +2089,10 @@ v8::Local<v8::Value> WebContents::GetLastWebPreferences(
 }
 
 bool WebContents::IsRemoteModuleEnabled() const {
-  if (web_contents()->GetVisibleURL().SchemeIs("devtools")) {
-    return false;
-  }
   if (auto* web_preferences = WebContentsPreferences::From(web_contents())) {
     return web_preferences->IsRemoteModuleEnabled();
   }
-  return true;
+  return false;
 }
 
 v8::Local<v8::Value> WebContents::GetOwnerBrowserWindow() const {
@@ -2274,7 +2290,7 @@ void WebContents::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("setZoomFactor", &WebContents::SetZoomFactor)
       .SetMethod("getZoomFactor", &WebContents::GetZoomFactor)
       .SetMethod("getType", &WebContents::GetType)
-      .SetMethod("_getPreloadPath", &WebContents::GetPreloadPath)
+      .SetMethod("_getPreloadPaths", &WebContents::GetPreloadPaths)
       .SetMethod("getWebPreferences", &WebContents::GetWebPreferences)
       .SetMethod("getLastWebPreferences", &WebContents::GetLastWebPreferences)
       .SetMethod("_isRemoteModuleEnabled", &WebContents::IsRemoteModuleEnabled)

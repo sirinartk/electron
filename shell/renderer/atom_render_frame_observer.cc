@@ -68,13 +68,13 @@ void AtomRenderFrameObserver::DidCreateScriptContext(
   if (ShouldNotifyClient(world_id))
     renderer_client_->DidCreateScriptContext(context, render_frame_);
 
-  bool use_context_isolation = renderer_client_->isolated_world();
+  bool use_context_isolation =
+      renderer_client_->web_preferences().context_isolation;
   bool is_main_world = IsMainWorld(world_id);
   bool is_main_frame = render_frame_->IsMainFrame();
   bool is_not_opened = !render_frame_->GetWebFrame()->Opener();
   bool allow_node_in_sub_frames =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kNodeIntegrationInSubFrames);
+      renderer_client_->web_preferences().node_integration_in_subframes;
   bool should_create_isolated_context =
       use_context_isolation && is_main_world &&
       (is_main_frame || allow_node_in_sub_frames) && is_not_opened;
@@ -146,10 +146,11 @@ bool AtomRenderFrameObserver::IsIsolatedWorld(int world_id) {
 }
 
 bool AtomRenderFrameObserver::ShouldNotifyClient(int world_id) {
+  bool use_context_isolation =
+      renderer_client_->web_preferences().context_isolation;
   bool allow_node_in_sub_frames =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kNodeIntegrationInSubFrames);
-  if (renderer_client_->isolated_world() &&
+      renderer_client_->web_preferences().node_integration_in_subframes;
+  if (use_context_isolation &&
       (render_frame_->IsMainFrame() || allow_node_in_sub_frames))
     return IsIsolatedWorld(world_id);
   else

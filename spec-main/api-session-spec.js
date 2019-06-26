@@ -47,15 +47,27 @@ describe('session module', () => {
       expect(session.fromPartition('test')).to.equal(session.fromPartition('test'))
     })
 
+    // TODO(codebytere): remove in Electron v8.0.0
+    it('created session is ref-counted (functions)', () => {
+      const partition = 'test2'
+      const userAgent = 'test-agent'
+      const ses1 = session.fromPartition(partition)
+      ses1.setUserAgent(userAgent)
+      expect(ses1.userAgent()).to.equal(userAgent)
+      ses1.destroy()
+      const ses2 = session.fromPartition(partition)
+      expect(ses2.getUserAgent()).to.not.equal(userAgent)
+    })
+
     it('created session is ref-counted', () => {
       const partition = 'test2'
       const userAgent = 'test-agent'
       const ses1 = session.fromPartition(partition)
       ses1.setUserAgent(userAgent)
-      expect(ses1.getUserAgent()).to.equal(userAgent)
+      expect(ses1.userAgent).to.equal(userAgent)
       ses1.destroy()
       const ses2 = session.fromPartition(partition)
-      expect(ses2.getUserAgent()).to.not.equal(userAgent)
+      expect(ses2.userAgent).to.not.equal(userAgent)
     })
   })
 

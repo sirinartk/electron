@@ -19,7 +19,7 @@ typedef NSString* NSAppearanceName;
 - (void)setAppearance:(NSAppearance*)appearance API_AVAILABLE(macosx(10.14));
 @end
 
-BASE_EXPORT extern NSAppearanceName const NSAppearanceNameDarkAqua;
+NSAppearanceName const NSAppearanceNameDarkAqua = @"NSAppearanceNameDarkAqua";
 
 #if !defined(MAC_OS_X_VERSION_10_13_2)
 
